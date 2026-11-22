@@ -4,6 +4,7 @@
 #define APP_NAME_FULL "Simple Installer"
 #define APP_ID_FULL "xyz.inthestars.si-gui"
 
+#define CBU_ARCHIVE_ENABLED
 #define ENGINE_NO_MAINMENU
 #define ENGINE_INTERCEPT_MAIN
 #define ENGINE_NO_SETTINGS
