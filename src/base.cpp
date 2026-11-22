@@ -13,12 +13,64 @@
 #include "locale.hpp"
 #include "ui_layout.hpp"
 #include "install_obj.hpp"
+#include "ui_progressbar.hpp"
 
 // #define INSTALL_FAKE
 
 static fpath installpkg;
 static si::InstallPackage pkg = si::InstallPackage::blank();
 
+class ExtractProgress : public UIBase {
+public:
+    ExtractProgress(ArchiveTarXZ &astream,fpath tpath) : install_path(tpath), pkg_xz(astream) {
+        list = pkg_xz.get_entries();
+        list_max = list.size();
+        if (std::filesystem::exists(install_path)) std::filesystem::remove_all(install_path);
+        std::filesystem::create_directories(install_path);
+
+        prog = new UIProgressBar();
+        prog->set_progress(0,1);
+
+        prog->size = scale2(.7,0,0,12);
+        prog->anchor = vec(.5,0);
+        prog->position = scale2(.5,.5,0,2);
+
+        UIText *txt = new UIText("",&medium_font);
+        txt->size = scale2(.7,0,0,24);
+        txt->anchor = vec(.5,1);
+        txt->position = scale2(.5,.5,0,-2);
+
+        add_object(prog);
+        add_object(txt);
+    }
+    void ui_frame(F64 dt) override {
+        if (list.empty()) {
+            cbu::log_verbose("List empty!");
+            txt->set_text("");
+            prog->set_progress(1,1);
+        } else {
+            fpath et = list.back();
+            list.pop_back();
+
+            BYTEARRAY stream = pkg_xz.get_entry(et);
+            fpath tpath = install_path / et;
+            cbu::write_to_file_safe_binary(tpath,stream);
+
+            SZ i = list_max - list.size();
+            txt->set_text(std::vformat(get_text("install/progress"),std::make_format_args(et,)));
+            prog->set_progress(i,list_max);
+        }
+
+        update_layer();
+    }
+
+    UIText *txt;
+    UIProgressBar *prog;
+    fpath install_path;
+    vector<fpath> list;
+    SZ list_max;
+    ArchiveTarXZ &pkg_xz;
+};
 class IntroScreen : public UILayer {
 public:
     IntroScreen() {
@@ -38,32 +90,55 @@ public:
         btns_hbox->anchor = vec::half();
 
         c_obj = cont_btn->activated.add_callback([title,this]() {
-            title->position = scale2::from_scale(0,0);
-            title->size = scale2::from_scale(1,.2);
-            title->anchor = vec::zero();
+            if (stage == 0) {
+                title->position = scale2::from_scale(0,0);
+                title->size = scale2::from_scale(1,.2);
+                title->anchor = vec::zero();
 
-            btns_hbox->position = scale2::from_scale(0,1);
-            btns_hbox->size = scale2::from_scale(1,.2);
-            btns_hbox->anchor = vec(0,1);
+                btns_hbox->position = scale2::from_scale(0,1);
+                btns_hbox->size = scale2::from_scale(1,.2);
+                btns_hbox->anchor = vec(0,1);
 
-            UIText *opt = new UIText(get_text("installer/thisuser"),&medium_font);
-            content->add_object(opt);
+                // #ifdef _WIN32
+                // const char* value = std::getenv("LOCALAPPDATA");
+                // #else
+                // const char* value = std::getenv("HOME");
+                // #endif
+                // if (!value) throw std::runtime_error("Could not get install path");
+                // #ifdef _WIN32
+                // fpath install_path = fpath(value) / pkg.name;
+                // #else
+                // fpath install_path = fpath(value) / "Applications" / pkg.name;
+                // #endif
 
-            update();
-            void *o = c_obj;
-            queue_call([this,o]() {
-                cont_btn->activated.remove_callback(o);
-            });
-            c_obj = cont_btn->activated.add_callback([this]() {
-                content->clear_objects();
+                install_path = cbu::get_local_install_path(pkg.name);
+
+                UIVBoxLayout *vbox = new UIVBoxLayout();
+                UIText *opt = new UIText(get_text("installer/thisuser"),&medium_font);
+                UIText *path = new UIText(std::vformat(std::string(get_text("installer/path")),std::make_format_args(install_path)),&medium_font);
+
+                vbox->add_object(opt);
+                vbox->add_object(path);
+                content->add_object(vbox);
 
                 update();
-
-                void *o = c_obj;
-                queue_call([this,o]() {
-                    cont_btn->activated.remove_callback(o);
+                stage = 1;
+                return;
+            } if (stage == 1) {
+                queue_call([this]() {
+                    btns_hbox->clear_objects();
+                    update();
                 });
-            });
+                content->clear_objects();
+                bg->delete_object(title);
+
+                ExtractProgress *pgr = new ExtractProgress(pkg.get_pkg(),install_path);
+
+                content->add_object(pgr);
+                update();
+                stage = 2;
+                return;
+            }
         });
         cancel->activated.add_callback([]() {
             engine_quit(1);
@@ -71,16 +146,20 @@ public:
 
         content->quick_set_centered(scale2::from_scale(1,.6));
 
+        btns_hbox->add_object(cont_btn);
+        btns_hbox->add_object(cancel);
+
         bg->add_object(content);
         bg->add_object(title);
         bg->add_object(btns_hbox);
-        btns_hbox->add_object(cont_btn);
-        btns_hbox->add_object(cancel);
+
         add_object(bg);
 
         update();
     }
 
+    fpath install_path;
+    SZ stage = 0;
     void *c_obj;
     UIButton *cont_btn;
     UIHBoxLayout *btns_hbox;
@@ -111,8 +190,9 @@ bool intercept_main() {
         pkg = si::InstallPackage::load(installpkg);
         cbu::log_success("Install package loaded succesfully!");
     } catch (std::runtime_error &err) {
-        cbu::log_error(false,std::format("Failed to load package: {}",err.what()));
-        pkg = si::InstallPackage::blank();
+        cbu::log_error(false,std::format("FATAL: Failed to load package: {}",err.what()));
+
+        return true;
     }
 #else
     fpath folder = cbu::get_exe_path().parent_path();
