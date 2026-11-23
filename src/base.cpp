@@ -35,9 +35,10 @@ public:
         prog->anchor = vec(.5,0);
         prog->position = scale2(.5,.5,0,2);
 
-        UIText *txt = new UIText("",&medium_font);
+        txt = new UIText("",&medium_font);
         txt->size = scale2(.7,0,0,24);
         txt->anchor = vec(.5,1);
+        // txt->text_anchor = vec(1,.5);
         txt->position = scale2(.5,.5,0,-2);
 
         add_object(prog);
@@ -57,7 +58,9 @@ public:
             cbu::write_to_file_safe_binary(tpath,stream);
 
             SZ i = list_max - list.size();
-            txt->set_text(std::vformat(get_text("install/progress"),std::make_format_args(et,)));
+            F64 prc = (F64(i) / F64(list_max)) * 100.0;
+
+            txt->set_text(std::vformat(std::string(get_text("installer/progress")),std::make_format_args(et,prc)));
             prog->set_progress(i,list_max);
         }
 
