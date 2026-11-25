@@ -4,6 +4,7 @@
 #include "canvas.hpp"
 #include "engine.hpp"
 #include "archive.hpp"
+#include "font.hpp"
 #include "graphics.hpp"
 #include <filesystem>
 #include <format>
@@ -20,9 +21,24 @@
 static fpath installpkg;
 static si::InstallPackage pkg = si::InstallPackage::blank();
 
+class DoneScreen : public UIBase {
+public:
+    DoneScreen(func<void()> done) {
+        UIVBoxLayout *vbox = new UIVBoxLayout();
+
+        UIText *title = new UIText(get_text("installer/done"),&medium_font);
+        UIButton *c = new UIButton(get_text("installer/finish"));
+
+        c->activated.add_callback(done);
+
+        vbox->add_object(title);
+        vbox->add_object(c);
+        add_object(vbox);
+    }
+};
 class ExtractProgress : public UIBase {
 public:
-    ExtractProgress(ArchiveTarXZ &astream,fpath tpath) : install_path(tpath), pkg_xz(astream) {
+    ExtractProgress(ArchiveTarXZ &astream,fpath tpath,func<void()> done) : done(done), install_path(tpath), pkg_xz(astream) {
         list = pkg_xz.get_entries();
         list_max = list.size();
         if (std::filesystem::exists(install_path)) std::filesystem::remove_all(install_path);
@@ -46,9 +62,12 @@ public:
     }
     void ui_frame(F64 dt) override {
         if (list.empty()) {
-            cbu::log_verbose("List empty!");
-            txt->set_text("");
-            prog->set_progress(1,1);
+            if (done) {
+                queue_call(done);
+                done = NULL;
+                txt->set_text("");
+                prog->set_progress(1,1);
+            }
         } else {
             fpath et = list.back();
             list.pop_back();
@@ -66,6 +85,8 @@ public:
 
         update_layer();
     }
+
+    func<void()> done;
 
     UIText *txt;
     UIProgressBar *prog;
@@ -86,7 +107,7 @@ public:
 
         btns_hbox = new UIHBoxLayout();
         cont_btn = new UIButton(get_text("installer/proceed"));
-        UIButton *cancel = new UIButton(get_text("generic/back"));
+        UIButton *cancel = new UIButton(get_text("installer/abort"));
 
         btns_hbox->position = scale2::from_scale(.5,.75);
         btns_hbox->size = scale2::from_scale(1,.5);
@@ -135,7 +156,15 @@ public:
                 content->clear_objects();
                 bg->delete_object(title);
 
-                ExtractProgress *pgr = new ExtractProgress(pkg.get_pkg(),install_path);
+                ExtractProgress *pgr = new ExtractProgress(pkg.get_pkg(),install_path,[this]() {
+                    content->clear_objects();
+                    DoneScreen *scr = new DoneScreen([this]() {
+                        engine_quit(0);
+                    });
+
+                    content->add_object(scr);
+                    update();
+                });
 
                 content->add_object(pgr);
                 update();
